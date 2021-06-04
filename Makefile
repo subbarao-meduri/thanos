@@ -5,6 +5,20 @@ DOCKER_IMAGE_REPO ?= quay.io/thanos/thanos
 DOCKER_IMAGE_TAG  ?= $(subst /,-,$(shell git rev-parse --abbrev-ref HEAD))-$(shell date +%Y-%m-%d)-$(shell git rev-parse --short HEAD)
 DOCKER_CI_TAG     ?= test
 
+SHA=''
+arch = $(shell uname -m)
+# Run `DOCKER_CLI_EXPERIMENTAL=enabled docker manifest inspect quay.io/prometheus/busybox:latest` to get SHA
+# Update at 2020.12.11
+ifeq ($(arch), x86_64)
+    # amd64
+    SHA="14d68ca3d69fceaa6224250c83d81d935c053fb13594c811038c461194599973"
+else ifeq ($(arch), armv8)
+    # arm64
+    SHA="5478a46f1eb37ebe414c399766f8088bc8353345602053485dd429b9a87097e5"
+else
+    echo >&2 "only support amd64 or arm64 arch" && exit 1
+endif
+
 # Ensure everything works even if GOPATH is not set, which is often the case.
 # The `go env GOPATH` will work for all cases for Go 1.8+.
 GOPATH            ?= $(shell go env GOPATH)
@@ -229,6 +243,12 @@ test-e2e: docker
 	# NOTE(bwplotka):
 	# * If you see errors on CI (timeouts), but not locally, try to add -parallel 1 to limit to single CPU to reproduce small 1CPU machine.
 	@go test $(GOTEST_OPTS) ./test/e2e/...
+
+.PHONY: test-e2e-local
+test-e2e-local: ## Runs all thanos e2e tests locally.
+test-e2e-local: export THANOS_TEST_OBJSTORE_SKIP=GCS,S3,AZURE,SWIFT,COS,ALIYUNOSS
+test-e2e-local:
+	$(MAKE) test-e2e
 
 .PHONY: install-deps
 install-deps: ## Installs dependencies for integration tests. It installs supported versions of Prometheus and alertmanager to test against in integration tests.

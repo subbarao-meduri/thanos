@@ -1,4 +1,4 @@
-FROM golang:1.14.2-alpine3.11 as builder
+FROM golang:1.15-alpine3.12 as builder
 
 WORKDIR $GOPATH/src/github.com/thanos-io/thanos
 # Change in the docker context invalidates the cache so to leverage docker
@@ -14,8 +14,10 @@ RUN git update-index --refresh; make build
 
 # -----------------------------------------------------------------------------
 
-FROM quay.io/prometheus/busybox:latest
+FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
 LABEL maintainer="The Thanos Authors"
+
+
 
 COPY --from=builder /go/bin/thanos /bin/thanos
 
