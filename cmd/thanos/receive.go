@@ -75,6 +75,7 @@ func registerReceive(app *extkingpin.App) {
 			WALCompression:         conf.walCompression,
 			AllowOverlappingBlocks: conf.tsdbAllowOverlappingBlocks,
 			MaxExemplars:           conf.tsdbMaxExemplars,
+			StripeSize:             conf.tsdbStripeSize,
 		}
 
 		// Are we running in IngestorOnly, RouterOnly or RouterIngestor mode?
@@ -694,6 +695,7 @@ type receiveConfig struct {
 	tsdbMaxBlockDuration       *model.Duration
 	tsdbAllowOverlappingBlocks bool
 	tsdbMaxExemplars           int
+	tsdbStripeSize             int
 
 	walCompression bool
 	noLockFile     bool
@@ -758,6 +760,8 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	rc.forwardTimeout = extkingpin.ModelDuration(cmd.Flag("receive-forward-timeout", "Timeout for each forward request.").Default("5s").Hidden())
 
 	rc.tsdbMinBlockDuration = extkingpin.ModelDuration(cmd.Flag("tsdb.min-block-duration", "Min duration for local TSDB blocks").Default("2h").Hidden())
+
+	cmd.Flag("tsdb.stripe-size", "The size in entries of the series hashmap").Default("16384").IntVar(&rc.tsdbStripeSize)
 
 	rc.tsdbMaxBlockDuration = extkingpin.ModelDuration(cmd.Flag("tsdb.max-block-duration", "Max duration for local TSDB blocks").Default("2h").Hidden())
 
