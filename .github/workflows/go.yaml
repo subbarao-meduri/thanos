@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        parallelism: [1]
+        parallelism: [4]
         index: [0,1,2,3]  
     runs-on: ubuntu-latest
     name: Thanos end-to-end tests
@@ -78,5 +78,5 @@ jobs:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
 
-      - name: Run e2e docker-based tests.
-        run: make test-e2e GH_PARALLEL=${{ matrix.parallelism }} GH_INDEX=${{ matrix.index }}
+      # - name: Run e2e docker-based tests.
+      #   run: make test-e2e GH_PARALLEL=${{ matrix.parallelism }} GH_INDEX=${{ matrix.index }}
