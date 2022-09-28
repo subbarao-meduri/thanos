@@ -205,7 +205,6 @@ replace (
 
 	// TODO: Remove this: https://github.com/thanos-io/thanos/issues/3967.
 	github.com/minio/minio-go/v7 => github.com/bwplotka/minio-go/v7 v7.0.11-0.20210324165441-f9927e5255a6
-	github.com/modern-go/reflect2 => github.com/modern-go/reflect2 v1.0.2
 	// fix CVE-2022-24450
 	github.com/nats-io/nats-server/v2 => github.com/nats-io/nats-server/v2 v2.8.2
 	// Make sure Prometheus version is pinned as Prometheus semver does not include Go APIs.
