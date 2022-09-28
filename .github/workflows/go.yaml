@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        parallelism: [4]
+        parallelism: [1]
         index: [0,1,2,3]  
     runs-on: ubuntu-latest
     name: Thanos end-to-end tests
