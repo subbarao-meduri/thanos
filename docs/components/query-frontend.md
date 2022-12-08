@@ -34,7 +34,15 @@ Query Frontend supports a retry mechanism to retry query when HTTP requests are 
 
 ### Caching
 
-Query Frontend supports caching query results and reuses them on subsequent queries. If the cached results are incomplete, Query Frontend calculates the required subqueries and executes them in parallel on downstream queriers. Query Frontend can optionally align queries with their step parameter to improve the cacheability of the query results. Currently, in-memory cache (fifo cache) and memcached are supported.
+Query Frontend supports caching query results and reuses them on subsequent queries. If the cached results are incomplete, Query Frontend calculates the required subqueries and executes them in parallel on downstream queriers. Query Frontend can optionally align queries with their step parameter to improve the cacheability of the query results. Currently, in-memory cache (fifo cache), memcached, and redis are supported.
+
+#### Excluded from caching
+
+* Requests that support deduplication and having it disabled with `dedup=false`. Read more about deduplication in [Dedup documentation](query.md#deduplication-enabled).
+* Requests that specify Store Matchers.
+* Requests where downstream queriers set the header `Cache-Control=no-store` in the response:
+  * Requests with a partial **response**.
+  * Requests with other warnings.
 
 #### In-memory
 
@@ -117,6 +125,13 @@ config:
   get_multi_batch_size: 100
   max_set_multi_concurrency: 100
   set_multi_batch_size: 100
+  tls_enabled: false
+  tls_config:
+    ca_file: ""
+    cert_file: ""
+    key_file: ""
+    server_name: ""
+    insecure_skip_verify: false
   expiration: 24h0m0s
 ```
 
@@ -147,6 +162,19 @@ Keys which denote a duration are strings that can end with `s` or `m` to indicat
 * `max_conns_per_host` - maximum number of connections to each host (integer);
 
 You can find the default values [here](https://github.com/thanos-io/thanos/blob/55cb8ca38b3539381dc6a781e637df15c694e50a/pkg/exthttp/transport.go#L12-L27).
+
+## Forward Headers to Downstream Queriers
+
+`--query-frontend.forward-header` flag provides list of request headers forwarded by query frontend to downstream queriers.
+
+If downstream queriers need basic authentication to access, we can run query-frontend:
+
+```bash
+thanos query-frontend \
+    --http-address     "0.0.0.0:9090" \
+    --query-frontend.forward-header "Authorization"
+    --query-frontend.downstream-url="<thanos-querier>:<querier-http-port>"
+```
 
 ## Flags
 
@@ -233,6 +261,9 @@ Flags:
       --query-frontend.downstream-url="http://localhost:9090"
                                  URL of downstream Prometheus Query compatible
                                  API.
+      --query-frontend.forward-header=<http-header-name> ...
+                                 List of headers forwarded by the query-frontend
+                                 to downstream queriers, default is empty
       --query-frontend.log-queries-longer-than=0
                                  Log queries that are slower than the specified
                                  duration. Set to 0 to disable. Set to < 0 to
@@ -245,11 +276,21 @@ Flags:
                                  headers match the request, the first matching
                                  arg specified will take precedence. If no
                                  headers match 'anonymous' will be used.
+      --query-frontend.vertical-shards=QUERY-FRONTEND.VERTICAL-SHARDS
+                                 Number of shards to use when distributing
+                                 shardable PromQL queries. For more details, you
+                                 can refer to the Vertical query sharding
+                                 proposal:
+                                 https://thanos.io/tip/proposals-accepted/202205-vertical-query-sharding.md
       --query-range.align-range-with-step
                                  Mutate incoming queries to align their start
                                  and end with their step for better
                                  cache-ability. Note: Grafana dashboards do that
                                  by default.
+      --query-range.horizontal-shards=0
+                                 Split queries in this many requests when query
+                                 duration is below
+                                 query-range.max-split-interval.
       --query-range.max-query-length=0
                                  Limit the query time range (end - start time)
                                  in the query-frontend, 0 disables it.
@@ -260,6 +301,19 @@ Flags:
                                  Maximum number of retries for a single query
                                  range request; beyond this, the downstream
                                  error is returned.
+      --query-range.max-split-interval=0
+                                 Split query range below this interval in
+                                 query-range.horizontal-shards. Queries with a
+                                 range longer than this value will be split in
+                                 multiple requests of this length.
+      --query-range.min-split-interval=0
+                                 Split query range requests above this interval
+                                 in query-range.horizontal-shards requests of
+                                 equal range. Using this parameter is not
+                                 allowed with query-range.split-interval. One
+                                 should also set
+                                 query-range.split-min-horizontal-shards to a
+                                 value greater than 1 to enable splitting.
       --query-range.partial-response
                                  Enable partial response for query range
                                  requests if no partial_response param is
@@ -291,11 +345,11 @@ Flags:
                                  flag (mutually exclusive). Content of YAML file
                                  with request logging configuration. See format
                                  details:
-                                 https://gist.github.com/yashrsharma44/02f5765c5710dd09ce5d14e854f22825
+                                 https://thanos.io/tip/thanos/logging.md/#configuration
       --request.logging-config-file=<file-path>
                                  Path to YAML file with request logging
                                  configuration. See format details:
-                                 https://gist.github.com/yashrsharma44/02f5765c5710dd09ce5d14e854f22825
+                                 https://thanos.io/tip/thanos/logging.md/#configuration
       --tracing.config=<content>
                                  Alternative to 'tracing.config-file' flag
                                  (mutually exclusive). Content of YAML file with

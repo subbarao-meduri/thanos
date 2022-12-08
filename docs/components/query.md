@@ -229,7 +229,7 @@ Additionally, Thanos supports dynamic prefix configuration, which [is not yet im
 
 ## File SD
 
-`--store.sd-file` flag provides a path to a JSON or YAML formatted file, which contains a list of targets in [Prometheus target format](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#file_sd_config).
+`--store.sd-files` flag provides a path to a JSON or YAML formatted file, which contains a list of targets in [Prometheus target format](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#file_sd_config).
 
 Example file SD file in YAML:
 
@@ -246,6 +246,10 @@ Example file SD file in YAML:
   - thanos-store.infra:10901
 ```
 
+## Active Query Tracking
+
+`--query.active-query-path` is an option which allows the user to specify a directory which will contain a `queries.active` file to track active queries. To enable this feature, the user has to specify a directory other than "", since that is skipped being the default.
+
 ## Flags
 
 ```$ mdox-exec="thanos query --help"
@@ -260,7 +264,6 @@ Flags:
                                  in all alerts 'Source' field.
       --enable-feature= ...      Comma separated experimental feature names to
                                  enable.The current list of features is
-                                 promql-negative-offset, promql-at-modifier and
                                  query-pushdown.
       --endpoint=<endpoint> ...  Addresses of statically configured Thanos API
                                  servers (repeatable). The scheme may be
@@ -289,6 +292,8 @@ Flags:
       --grpc-client-tls-skip-verify
                                  Disable TLS certificate verification i.e self
                                  signed, signed by fake CA
+      --grpc-compression=none    Compression algorithm to use for gRPC requests
+                                 to other clients. Must be one of: snappy, none
       --grpc-grace-period=2m     Time to wait after an interrupt received for
                                  GRPC Server.
       --grpc-server-max-connection-age=60m
@@ -324,6 +329,9 @@ Flags:
                                  LogStartAndFinishCall: Logs the start and
                                  finish call of the requests. NoLogCall: Disable
                                  request logging.
+      --query.active-query-path=""
+                                 Directory to log currently active queries in
+                                 the queries.active file.
       --query.auto-downsampling  Enable automatic adjustment (step / 5) to what
                                  source of data should be used in store gateways
                                  if no max_source_resolution param is specified.
@@ -370,17 +378,26 @@ Flags:
                                  able to query without deduplication using
                                  'dedup=false' parameter. Data includes time
                                  series, recording rules, and alerting rules.
+      --query.telemetry.request-duration-seconds-quantiles=0.1... ...
+                                 The quantiles for exporting metrics about the
+                                 request duration quantiles.
+      --query.telemetry.request-samples-quantiles=100... ...
+                                 The quantiles for exporting metrics about the
+                                 samples count quantiles.
+      --query.telemetry.request-series-seconds-quantiles=10... ...
+                                 The quantiles for exporting metrics about the
+                                 series count quantiles.
       --query.timeout=2m         Maximum time to process query by query node.
       --request.logging-config=<content>
                                  Alternative to 'request.logging-config-file'
                                  flag (mutually exclusive). Content of YAML file
                                  with request logging configuration. See format
                                  details:
-                                 https://gist.github.com/yashrsharma44/02f5765c5710dd09ce5d14e854f22825
+                                 https://thanos.io/tip/thanos/logging.md/#configuration
       --request.logging-config-file=<file-path>
                                  Path to YAML file with request logging
                                  configuration. See format details:
-                                 https://gist.github.com/yashrsharma44/02f5765c5710dd09ce5d14e854f22825
+                                 https://thanos.io/tip/thanos/logging.md/#configuration
       --selector-label=<name>="<value>" ...
                                  Query selector labels that will be exposed in
                                  info endpoint (repeated).
@@ -452,3 +469,13 @@ Flags:
                                  Prometheus.
 
 ```
+
+## Exported metrics
+
+Thanos Query also exports metrics about its own performance. You can find a list with these metrics below.
+
+**Disclaimer**: this list is incomplete. The remaining metrics will be added over time.
+
+| Name                                    | Type      | Labels                | Description                                                                                                       |
+|-----------------------------------------|-----------|-----------------------|-------------------------------------------------------------------------------------------------------------------|
+| thanos_store_api_query_duration_seconds | Histogram | samples_le, series_le | Duration of the Thanos Store API select phase for a query according to the amount of samples and series selected. |

@@ -15,6 +15,7 @@ type: GCS
 config:
   bucket: ""
   service_account: ""
+prefix: ""
 ```
 
 In general, an average of 6 MB of local disk space is required per TSDB block stored in the object storage bucket, but for high cardinality blocks with large label set it can even go up to 30MB and more. It is for the pre-computed index, which includes symbols and postings offsets as well as metadata JSON.
@@ -138,11 +139,11 @@ Flags:
                                  flag (mutually exclusive). Content of YAML file
                                  with request logging configuration. See format
                                  details:
-                                 https://gist.github.com/yashrsharma44/02f5765c5710dd09ce5d14e854f22825
+                                 https://thanos.io/tip/thanos/logging.md/#configuration
       --request.logging-config-file=<file-path>
                                  Path to YAML file with request logging
                                  configuration. See format details:
-                                 https://gist.github.com/yashrsharma44/02f5765c5710dd09ce5d14e854f22825
+                                 https://thanos.io/tip/thanos/logging.md/#configuration
       --selector.relabel-config=<content>
                                  Alternative to 'selector.relabel-config-file'
                                  flag (mutually exclusive). Content of YAML file
@@ -189,6 +190,7 @@ Flags:
                                  See format details:
                                  https://thanos.io/tip/thanos/tracing.md/#configuration
       --version                  Show application version.
+      --web.disable              Disable Block Viewer UI.
       --web.disable-cors         Whether to disable CORS headers to be set by
                                  Thanos. By default Thanos sets CORS headers to
                                  be allowed by all.
@@ -327,6 +329,13 @@ config:
   get_multi_batch_size: 100
   max_set_multi_concurrency: 100
   set_multi_batch_size: 100
+  tls_enabled: false
+  tls_config:
+    ca_file: ""
+    cert_file: ""
+    key_file: ""
+    server_name: ""
+    insecure_skip_verify: false
 ```
 
 The **required** settings are:
@@ -335,8 +344,8 @@ The **required** settings are:
 
 While the remaining settings are **optional**:
 
-- `username`: the username to connect redis, only redis 6.0 and grater need this field.
-- `password`: the password to connect redis.
+- `username`: the username to connect to redis, only redis 6.0 and grater need this field.
+- `password`: the password to connect to redis.
 - `db`: the database to be selected after connecting to the server.
 - `dial_timeout`: the redis dial timeout.
 - `read_timeout`: the redis read timeout.
@@ -349,6 +358,13 @@ While the remaining settings are **optional**:
 - `get_multi_batch_size`: specifies the maximum size per batch for mget.
 - `max_set_multi_concurrency`: specifies the maximum number of concurrent SetMulti() operations.
 - `set_multi_batch_size`: specifies the maximum size per batch for pipeline set.
+- `tls_enabled`: enables the use of TLS to connect to redis
+- `tls_config`: TLS connection configuration:
+  - `ca_file`: path to Root CA certificate file to use
+  - `cert_file`: path to Client Certificate file to use
+  - `key_file`: path to the Key file for cert_file (NOTE: Both this and `cert_file` must be set if used)
+  - `servername`: Override the server name used to validate the server certificate
+  - `insecure_skip_verify`: Disable certificate verification
 
 ## Caching Bucket
 
@@ -397,9 +413,52 @@ Following options are used for metadata caching (meta.json files, deletion mark 
 - `metafile_content_ttl`: how long to cache content of meta.json and deletion mark files.
 - `metafile_max_size`: maximum size of cached meta.json and deletion mark file. Larger files are not cached.
 
-The yml structure for setting the in memory cache configs for caching bucket is the same as the [in-memory index cache](#in-memory-index-cache) and all the options to configure Caching Buket mentioned above can be used.
+The yml structure for setting the in memory cache configs for caching bucket is the same as the [in-memory index cache](#in-memory-index-cache) and all the options to configure Caching Bucket mentioned above can be used.
 
-Note that chunks and metadata cache is an experimental feature, and these fields may be renamed or removed completely in the future.
+In addition to the same cache backends memcached/in-memory/redis, caching bucket supports another type of backend.
+
+### *EXPERIMENTAL* Groupcache Caching Bucket Provider
+
+Groupcache is an experimental cache backend for the caching bucket introduced from version `v0.25` of Thanos.
+
+With groupcache, you do not need any external components for the caching layer because the caching layer becomes shared between all of the processes of Thanos Store. Another benefit that it provides is that it is a cache filling library meaning that given enough space in memory, the values will only be loaded once. For example, if the same metric is used in multiple concurrent queries then with groupcache Thanos Store would only load the metric's data from remote object storage once.
+
+All in all, it should be a superior caching solution to all other currently supported solutions. It just needs some battle-testing. So, help is needed with testing in real life scenarios! Please create an issue if you've found any problem. 🤗
+
+Here is how it looks like:
+
+<img src="../img/groupcache.png" class="img-fluid" alt="Example of a groupcache group showing that each Thanos Store instance communicates with all others in the group"/>
+
+Note that with groupcache enabled, new routes are registed on the HTTP server with the prefix `/_groupcache`. Using those routes, anyone can access any kind of data in the configured remote object storage. So, if you are exposing your Thanos Store to the Internet then it is highly recommended to use a reverse proxy in front and disable access to `/_groupcache/...`.
+
+Currently TLS *is* supported but on the client's side no verification is done of the received certificate. This will be added in the future. HTTP2 over cleartext is also enabled to improve the performance for users that don't use TLS.
+
+Example configuration that you could provide to the caching bucket configuration flags with the explanation of each configuration key:
+
+```yaml
+type: GROUPCACHE
+config:
+  self_url: http://10.123.22.3:8080
+  peers:
+    - http://10.123.22.3:8080
+    - http://10.123.22.10:8080
+    - http://10.123.22.100:8080
+  groupcache_group: test_group
+  dns_interval: 1s
+  timeout: 2s
+```
+
+In this case, three Thanos Store nodes are running in the same group meaning that they all point to the same remote object storage.
+
+- `self_url` - our own URL. On each node this will be different. This should be the external IP through which other nodes could access us;
+- `groupcache_group` - the groupcache group's name. All nodes using the same remote object storage configuration should use the same name. It is used in the HTTP requests. If it is different then nodes will not be able to load data from each other.
+- `dns_internal` - how often DNS lookups should be made.
+
+In the `peers` section it is possible to use the prefix form to automatically look up the peers using DNS. For example, you could use `dns+http://store.thanos.consul.svc:8080` to automatically look up healthy nodes from Consul using its DNS interface.
+
+Note that there must be no trailing slash in the `peers` configuration i.e. one of the strings must be identical to `self_url` and others should have the same form. Without this, loading data from peers may fail.
+
+If timeout is set to zero then there is no timeout for fetching and fetching's lifetime is equal to the lifetime to the original request's lifetime. It is recommended to keep it higher than zero. It is generally preferred to keep this value higher because the fetching operation potentially includes loading of data from remote object storage.
 
 ## Index Header
 

@@ -101,6 +101,7 @@ type: GCS
 config:
   bucket: ""
   service_account: ""
+prefix: ""
 ```
 
 Bucket can be extended to add more subcommands that will be helpful when working with object storage buckets by adding a new command within [`/cmd/thanos/tools_bucket.go`](../../cmd/thanos/tools_bucket.go)  .
@@ -522,6 +523,9 @@ Flags:
                                  other matchers will be ignored. When specified,
                                  this command will be run only once after
                                  successful replication. Repeated field
+      --ignore-marked-for-deletion
+                                 Do not replicate blocks that have deletion
+                                 mark.
       --log.format=logfmt        Log format to use. Possible options: logfmt or
                                  json.
       --log.level=info           Log filtering level.
@@ -598,6 +602,7 @@ type: GCS
 config:
   bucket: ""
   service_account: ""
+prefix: ""
 ```
 
 ```$ mdox-exec="thanos tools bucket downsample --help"
@@ -649,6 +654,7 @@ Flags:
                               format details:
                               https://thanos.io/tip/thanos/tracing.md/#configuration
       --version               Show application version.
+      --wait-interval=5m      Wait interval between downsample runs.
 
 ```
 
@@ -671,6 +677,7 @@ type: GCS
 config:
   bucket: ""
   service_account: ""
+prefix: ""
 ```
 
 ```$ mdox-exec="thanos tools bucket mark --help"
