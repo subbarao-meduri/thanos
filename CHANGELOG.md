@@ -45,11 +45,10 @@ We use *breaking :warning:* to mark changes that are not backward compatible (re
 - [#5785](https://github.com/thanos-io/thanos/pull/5785) Query: `thanos_store_nodes_grpc_connections` now trimms `external_labels` label name longer than 1000 character. It also allows customizations in what labels to preserve using `query.conn-metric.label` flag.
 - [#5542](https://github.com/thanos-io/thanos/pull/5542) Mixin: Added query concurrency panel to Querier dashboard.
 - [#5846](https://github.com/thanos-io/thanos/pull/5846) Query Frontend: vertical query sharding supports subqueries.
-- [#5909](https://github.com/thanos-io/thanos/pull/5909) Receive: Compact tenant head after no appends have happened for 1.5 `tsdb.max-block-size`.
-- [#5593](https://github.com/thanos-io/thanos/pull/5593) Cache: Switched Redis client to [Rueidis](https://github.com/rueian/rueidis). Rueidis is [faster](https://github.com/rueian/rueidis#benchmark-comparison-with-go-redis-v9) and provides [client-side caching](https://redis.io/docs/manual/client-side-caching/). It is highly recommended to use it so that repeated requests for the same key would not be needed.
-- [#5896](https://github.com/thanos-io/thanos/pull/5896) *: Upgraded Prometheus to v0.40.7 without implementing native histogram support. *Querying native histograms will fail with `Error executing query: invalid chunk encoding "<unknown>"` and native histograms in write requests are ignored.*
-- [#5838](https://github.com/thanos-io/thanos/pull/5838) Mixin: Added data touched type to Store dashboard.
-- [#5922](https://github.com/thanos-io/thanos/pull/5922) Compact: Retry on clean, partial marked errors when possible.
+- [#5909](https://github.com/thanos-io/thanos/pull/5909) Receive: compact tenant head after no appends have happened for 1.5 `tsdb.max-block-size`.
+- [#5593](https://github.com/thanos-io/thanos/pull/5593) Cache: switch Redis client to [Rueidis](https://github.com/rueian/rueidis). Rueidis is [faster](https://github.com/rueian/rueidis#benchmark-comparison-with-go-redis-v9) and provides [client-side caching](https://redis.io/docs/manual/client-side-caching/). It is highly recommended to use it so that repeated requests for the same key would not be needed.
+- [#5896](https://github.com/thanos-io/thanos/pull/5896) *: Upgrade Prometheus to v0.40.7 without implementing native histogram support. *Querying native histograms will fail with `Error executing query: invalid chunk encoding "<unknown>"` and native histograms in write requests are ignored.*
+- [#5999](https://github.com/thanos-io/thanos/pull/5999) *: Upgrade Alertmanager dependency to v0.25.0.
 
 ### Removed
 
