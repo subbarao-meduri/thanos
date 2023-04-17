@@ -22,10 +22,17 @@ import (
 
 	"github.com/thanos-io/objstore"
 
+	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/block/metadata"
 	"github.com/thanos-io/thanos/pkg/compact"
 	"github.com/thanos-io/thanos/pkg/model"
-	"github.com/thanos-io/thanos/pkg/testutil"
+)
+
+var (
+	minTime         = time.Unix(0, 0)
+	maxTime, _      = time.Parse(time.RFC3339, "9999-12-31T23:59:59Z")
+	minTimeDuration = model.TimeOrDurationValue{Time: &minTime}
+	maxTimeDuration = model.TimeOrDurationValue{Time: &maxTime}
 )
 
 var (
