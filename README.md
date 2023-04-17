@@ -88,5 +88,3 @@ See [`Adopters List`](website/data/adopters.yml).
 ## Maintainers
 
 See [MAINTAINERS.md](MAINTAINERS.md)
-
-Rebuild Image: Thu Jan  5 09:40:22 EST 2023

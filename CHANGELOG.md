@@ -8,16 +8,7 @@ NOTE: As semantic versioning states all 0.y.z releases can contain breaking chan
 
 We use *breaking :warning:* to mark changes that are not backward compatible (relates only to v0.y.z releases.)
 
-## [v0.29.0](https://github.com/thanos-io/thanos/tree/release-0.29) - 2022.11.03
-
-### Fixed
-- [#5642](https://github.com/thanos-io/thanos/pull/5642) Receive: Log labels correctly in writer debug messages.
-- [#5655](https://github.com/thanos-io/thanos/pull/5655) Receive: Fix recreating already pruned tenants.
-- [#5702](https://github.com/thanos-io/thanos/pull/5702) Store: Upgrade minio-go/v7 to fix panic caused by leaked goroutines.
-- [#5736](https://github.com/thanos-io/thanos/pull/5736) Compact: Fix crash in GatherNoCompactionMarkFilter.NoCompactMarkedBlocks.
-- [#5763](https://github.com/thanos-io/thanos/pull/5763) Compact: Enable metadata cache.
-- [#5759](https://github.com/thanos-io/thanos/pull/5759) Compact: Fix missing duration log key.
-- [#5799](https://github.com/thanos-io/thanos/pull/5799) Query Frontend: Fixed sharding behaviour for vector matches. Now queries with sharding should work properly where the query looks like: `foo and without (lbl) bar`.
+## Unreleased
 
 ## [v0.30.0](https://github.com/thanos-io/thanos/tree/release-0.30) - 2.01.2023
 

@@ -35,13 +35,6 @@ var (
 	maxTimeDuration = model.TimeOrDurationValue{Time: &maxTime}
 )
 
-var (
-	minTime         = time.Unix(0, 0)
-	maxTime, _      = time.Parse(time.RFC3339, "9999-12-31T23:59:59Z")
-	minTimeDuration = model.TimeOrDurationValue{Time: &minTime}
-	maxTimeDuration = model.TimeOrDurationValue{Time: &maxTime}
-)
-
 func testLogger(testName string) log.Logger {
 	return log.With(
 		level.NewFilter(log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), level.AllowDebug()),
