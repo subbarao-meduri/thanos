@@ -147,11 +147,12 @@ react-app-start: $(REACT_APP_NODE_MODULES_PATH)
 	@echo ">> running React app"
 	cd $(REACT_APP_PATH) && npm start
 
+# NOTICE: must --cgo flag to build dynamically linked binary for FIPS compliance
 .PHONY: build
 build: ## Builds Thanos binary using `promu`.
 build: check-git deps $(PROMU)
 	@echo ">> building Thanos binary in $(PREFIX)"
-	@$(PROMU) build --prefix $(PREFIX)
+	@$(PROMU) build --cgo --prefix $(PREFIX) 
 
 GIT_BRANCH=$(shell $(GIT) rev-parse --abbrev-ref HEAD)
 .PHONY: crossbuild
