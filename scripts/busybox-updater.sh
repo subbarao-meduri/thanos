@@ -11,7 +11,9 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-MANIFEST_DIGEST=$(echo "${CURL_TAGS}" | jq -r '.tags[]' | jq -r -n 'first(inputs | select (.name=="latest")) | .manifest_digest ')
+#MANIFEST_DIGEST=$(echo "${CURL_TAGS}" | jq -r '.tags[]' | jq -r -n 'first(inputs | select (.name=="latest")) | .manifest_digest ')
+# must use glibc busybox image when building dynamically linked thanos binary
+MANIFEST_DIGEST=$(echo "${CURL_TAGS}" | jq -r '.tags[]' | jq -r -n 'first(inputs | select (.name=="glibc")) | .manifest_digest ')
 
 # With this manifest_digest, we can now fetch the actual manifest, which contains the digest per platform
 echo "Doing CURL request 2/2: getting manifest."
