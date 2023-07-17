@@ -157,16 +157,17 @@ build: check-git deps $(PROMU)
 GIT_BRANCH=$(shell $(GIT) rev-parse --abbrev-ref HEAD)
 .PHONY: crossbuild
 crossbuild: ## Builds all binaries for all platforms.
-ifeq ($(GIT_BRANCH), main)
-crossbuild: | $(PROMU)
-	@echo ">> crossbuilding all binaries"
-	# we only care about below two for the main branch
-	$(PROMU) crossbuild -v -p linux/amd64 -p linux/arm64 -p linux/ppc64le
-else
-crossbuild: | $(PROMU)
-	@echo ">> crossbuilding all binaries"
-	$(PROMU) crossbuild -v
-endif
+	@echo ">> crossbuilding disabled for this fork"
+# ifeq ($(GIT_BRANCH), main)
+# crossbuild: | $(PROMU)
+# 	@echo ">> crossbuilding all binaries"
+# 	# we only care about below two for the main branch
+# 	$(PROMU) crossbuild -v -p linux/amd64 -p linux/arm64 -p linux/ppc64le
+# else
+# crossbuild: | $(PROMU)
+# 	@echo ">> crossbuilding all binaries"
+# 	$(PROMU) crossbuild -v
+# endif
 
 
 .PHONY: deps
