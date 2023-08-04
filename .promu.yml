@@ -3,6 +3,7 @@ go:
 repository:
   path: github.com/thanos-io/thanos
 build:
+  static: false
   binaries:
     - name: thanos
       path: ./cmd/thanos
