@@ -296,7 +296,7 @@ proto: check-git $(GOIMPORTS) $(PROTOC) $(PROTOC_GEN_GOGOFAST)
 tarballs-release: ## Build tarballs.
 tarballs-release: $(PROMU)
 	@echo ">> Publishing tarballs"
-	$(PROMU) crossbuild -v tarballs
+	$(PROMU) crossbuild -v --cgo tarballs
 	$(PROMU) checksum -v .tarballs
 	$(PROMU) release -v .tarballs
 
