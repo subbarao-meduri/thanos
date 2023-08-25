@@ -28,7 +28,6 @@ import (
 	"github.com/thanos-io/objstore/providers/s3"
 
 	"github.com/thanos-io/objstore/exthttp"
-
 	"github.com/thanos-io/thanos/pkg/alert"
 	"github.com/thanos-io/thanos/pkg/httpconfig"
 
