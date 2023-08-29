@@ -15,7 +15,7 @@ ssh "${OPT[@]}" "$HOST" sudo usermod -a -G docker '$USER'
 # Thanos e2e test depends on chrome
 ssh "${OPT[@]}" "$HOST" curl -Lo /tmp/google-chrome-stable_current_x86_64.rpm https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
 ssh "${OPT[@]}" "$HOST" sudo yum install /tmp/google-chrome-stable_current_x86_64.rpm -y
-ssh "${OPT[@]}" "$HOST" "cd /tmp/thanos && make test-e2e-local" 2>&1 | tee $ARTIFACT_DIR/test.log
+ssh "${OPT[@]}" "$HOST" "cd /tmp/thanos && make -f Makefile.prow test-e2e-local" 2>&1 | tee $ARTIFACT_DIR/test.log
 if [[ $? -ne 0 ]]; then
   echo "Failed to run e2e tests"
   cat $ARTIFACT_DIR/test.log
