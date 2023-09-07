@@ -1,12 +1,13 @@
 approvers:
-- dislbenn
-- marcolan018
-- ngraham20
 - subbarao-meduri
+- dislbenn
 - bjoydeep
+- douglascamata
+- philipgough
+- saswatamcode
 
 reviewers:
 - clyang82
-- haoqing0110
 - morvencao
-- songleo
+- marcolan018
+

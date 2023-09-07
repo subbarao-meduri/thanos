@@ -67,6 +67,18 @@ http_requests_total`,
 			name:       "aggregate by expression with label_join, sharding label is dynamic",
 			expression: `sum by (dst_label) (label_join(metric, "dst_label", ",", "src_label"))`,
 		},
+		{
+			name:       "absent_over_time is not shardable",
+			expression: `sum by (url) (absent_over_time(http_requests_total{code="400"}[5m]))`,
+		},
+		{
+			name:       "absent is not shardable",
+			expression: `sum by (url) (absent(http_requests_total{code="400"}))`,
+		},
+		{
+			name:       "scalar is not shardable",
+			expression: `scalar(sum by (url) (http_requests_total{code="400"}))`,
+		},
 	}
 
 	shardableByLabels := []testCase{
@@ -93,6 +105,11 @@ http_requests_total`,
 		{
 			name:           "binary expression with vector matching and grouping",
 			expression:     `sum by (cluster, pod) (http_requests_total{code="400"}) / on (pod) sum by (cluster, pod) (http_requests_total)`,
+			shardingLabels: []string{"pod"},
+		},
+		{
+			name:           "binary expression with vector matching with outer aggregation",
+			expression:     `sum(http_requests_total{code="400"} * http_requests_total) by (pod)`,
 			shardingLabels: []string{"pod"},
 		},
 		{
@@ -168,6 +185,16 @@ sum by (container) (
 			expression:     `sum(sum_over_time(container_memory_working_set_bytes{container_name!="POD",container_name!="",namespace="kube-system"}[1d:5m])) by (instance, cluster) / avg(label_replace(sum(sum_over_time(kube_node_status_capacity_memory_bytes[1d:5m])) by (node, cluster), "instance", "$1", "node", "(.*)")) by (instance, cluster)`,
 			shardingLabels: []string{"cluster"},
 		},
+		{
+			name:           "complex query with label_replace and nested aggregations",
+			expression:     `avg(label_replace(label_replace(avg(count_over_time(kube_pod_container_resource_requests{resource="memory", unit="byte", container!="",container!="POD", node!="", }[1h] )*avg_over_time(kube_pod_container_resource_requests{resource="memory", unit="byte", container!="",container!="POD", node!="", }[1h] )) by (namespace,container,pod,node,cluster_id) , "container_name","$1","container","(.+)"), "pod_name","$1","pod","(.+)")) by (namespace,container_name,pod_name,node,cluster_id)`,
+			shardingLabels: []string{"namespace", "node", "cluster_id"},
+		},
+		{
+			name:           "complex query with label_replace, nested aggregations and binary expressions",
+			expression:     `sort_desc(avg(label_replace(label_replace(label_replace(count_over_time(container_memory_working_set_bytes{container!="", container!="POD", instance!="", }[1h] ), "node", "$1", "instance", "(.+)"), "container_name", "$1", "container", "(.+)"), "pod_name", "$1", "pod", "(.+)")*label_replace(label_replace(label_replace(avg_over_time(container_memory_working_set_bytes{container!="", container!="POD", instance!="", }[1h] ), "node", "$1", "instance", "(.+)"), "container_name", "$1", "container", "(.+)"), "pod_name", "$1", "pod", "(.+)")) by (namespace, container_name, pod_name, node, cluster_id))`,
+			shardingLabels: []string{"namespace", "cluster_id"},
+		},
 	}
 
 	shardableWithoutLabels := []testCase{
@@ -180,6 +207,16 @@ sum by (container) (
 			name:           "multiple aggregations with without grouping",
 			expression:     "max without (pod) (sum without (pod, cluster) (http_requests_total))",
 			shardingLabels: []string{"pod", "cluster"},
+		},
+		{
+			name:           "binary expression with outer without grouping",
+			expression:     `sum(http_requests_total{code="400"} * http_requests_total) without (pod)`,
+			shardingLabels: []string{"pod"},
+		},
+		{
+			name:           "binary expression with vector matching and outer without grouping",
+			expression:     `sum(http_requests_total{code="400"} * ignoring(cluster) http_requests_total) without ()`,
+			shardingLabels: []string{"__name__", "cluster"},
 		},
 		{
 			name:           "binary expression with without vector matching and grouping",

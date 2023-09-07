@@ -141,7 +141,7 @@ func NewRoundTripperFromConfig(cfg config_util.HTTPClientConfig, transportConfig
 			return nil, err
 		}
 
-		// If a authorization_credentials is provided, create a round tripper that will set the
+		// If an authorization_credentials is provided, create a round tripper that will set the
 		// Authorization header correctly on each request.
 		if cfg.Authorization != nil && len(cfg.Authorization.Credentials) > 0 {
 			rt = config_util.NewAuthorizationCredentialsRoundTripper(cfg.Authorization.Type, cfg.Authorization.Credentials, rt)
@@ -173,7 +173,11 @@ func NewRoundTripperFromConfig(cfg config_util.HTTPClientConfig, transportConfig
 		return newRT(tlsConfig)
 	}
 
-	return config_util.NewTLSRoundTripper(tlsConfig, cfg.TLSConfig.CAFile, newRT)
+	return config_util.NewTLSRoundTripper(tlsConfig, config_util.TLSRoundTripperSettings{
+		CAFile:   cfg.TLSConfig.CAFile,
+		CertFile: cfg.TLSConfig.CertFile,
+		KeyFile:  cfg.TLSConfig.KeyFile,
+	}, newRT)
 }
 
 // NewHTTPClient returns a new HTTP client.

@@ -1,9 +1,8 @@
 go:
-  version: 1.19
+  version: 1.20
 repository:
   path: github.com/thanos-io/thanos
 build:
-  static: false
   binaries:
     - name: thanos
       path: ./cmd/thanos

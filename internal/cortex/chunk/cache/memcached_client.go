@@ -16,13 +16,10 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sony/gobreaker"
 	"github.com/thanos-io/thanos/pkg/discovery/dns"
-
-	util_log "github.com/thanos-io/thanos/internal/cortex/util/log"
 )
 
 // MemcachedClient interface exists for mocking memcacheClient.
@@ -148,7 +145,6 @@ func NewMemcachedClient(cfg MemcachedClientConfig, name string, r prometheus.Reg
 	}
 
 	if len(cfg.Addresses) > 0 {
-		util_log.WarnExperimentalUse("DNS-based memcached service discovery")
 		newClient.addresses = strings.Split(cfg.Addresses, ",")
 	}
 
@@ -190,34 +186,6 @@ func (c *memcachedClient) dialViaCircuitBreaker(network, address string, timeout
 		return nil, err
 	}
 	return conn.(net.Conn), nil
-}
-
-// Stop the memcache client.
-func (c *memcachedClient) Stop() {
-	close(c.quit)
-	c.wait.Wait()
-}
-
-func (c *memcachedClient) Set(item *memcache.Item) error {
-	// Skip hitting memcached at all if the item is bigger than the max allowed size.
-	if c.maxItemSize > 0 && len(item.Value) > c.maxItemSize {
-		c.skipped.Inc()
-		return nil
-	}
-
-	err := c.Client.Set(item)
-	if err == nil {
-		return nil
-	}
-
-	// Inject the server address in order to have more information about which memcached
-	// backend server failed. This is a best effort.
-	addr, addrErr := c.serverList.PickServer(item.Key)
-	if addrErr != nil {
-		return err
-	}
-
-	return errors.Wrapf(err, "server=%s", addr)
 }
 
 func (c *memcachedClient) updateLoop(updateInterval time.Duration) {

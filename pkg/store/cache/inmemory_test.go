@@ -25,14 +25,14 @@ import (
 func TestNewInMemoryIndexCache(t *testing.T) {
 	// Should return error on invalid YAML config.
 	conf := []byte("invalid")
-	cache, err := NewInMemoryIndexCache(log.NewNopLogger(), nil, conf)
+	cache, err := NewInMemoryIndexCache(log.NewNopLogger(), nil, nil, conf)
 	testutil.NotOk(t, err)
 	testutil.Equals(t, (*InMemoryIndexCache)(nil), cache)
 
 	// Should instance an in-memory index cache with default config
 	// on empty YAML config.
 	conf = []byte{}
-	cache, err = NewInMemoryIndexCache(log.NewNopLogger(), nil, conf)
+	cache, err = NewInMemoryIndexCache(log.NewNopLogger(), nil, nil, conf)
 	testutil.Ok(t, err)
 	testutil.Equals(t, uint64(DefaultInMemoryIndexCacheConfig.MaxSize), cache.maxSizeBytes)
 	testutil.Equals(t, uint64(DefaultInMemoryIndexCacheConfig.MaxItemSize), cache.maxItemSizeBytes)
@@ -42,7 +42,7 @@ func TestNewInMemoryIndexCache(t *testing.T) {
 max_size: 1MB
 max_item_size: 2KB
 `)
-	cache, err = NewInMemoryIndexCache(log.NewNopLogger(), nil, conf)
+	cache, err = NewInMemoryIndexCache(log.NewNopLogger(), nil, nil, conf)
 	testutil.Ok(t, err)
 	testutil.Equals(t, uint64(1024*1024), cache.maxSizeBytes)
 	testutil.Equals(t, uint64(2*1024), cache.maxItemSizeBytes)
@@ -52,7 +52,7 @@ max_item_size: 2KB
 max_size: 2KB
 max_item_size: 1MB
 `)
-	cache, err = NewInMemoryIndexCache(log.NewNopLogger(), nil, conf)
+	cache, err = NewInMemoryIndexCache(log.NewNopLogger(), nil, nil, conf)
 	testutil.NotOk(t, err)
 	testutil.Equals(t, (*InMemoryIndexCache)(nil), cache)
 	// testutil.Equals(t, uint64(1024*1024), cache.maxSizeBytes)
@@ -64,7 +64,7 @@ max_item_size: 1MB
 
 func TestInMemoryIndexCache_AvoidsDeadlock(t *testing.T) {
 	metrics := prometheus.NewRegistry()
-	cache, err := NewInMemoryIndexCacheWithConfig(log.NewNopLogger(), metrics, InMemoryIndexCacheConfig{
+	cache, err := NewInMemoryIndexCacheWithConfig(log.NewNopLogger(), nil, metrics, InMemoryIndexCacheConfig{
 		MaxItemSize: sliceHeaderSize + 5,
 		MaxSize:     sliceHeaderSize + 5,
 	})
@@ -79,15 +79,14 @@ func TestInMemoryIndexCache_AvoidsDeadlock(t *testing.T) {
 	testutil.Ok(t, err)
 	cache.lru = l
 
-	ctx := context.Background()
-	cache.StorePostings(ctx, ulid.MustNew(0, nil), labels.Label{Name: "test2", Value: "1"}, []byte{42, 33, 14, 67, 11})
+	cache.StorePostings(ulid.MustNew(0, nil), labels.Label{Name: "test2", Value: "1"}, []byte{42, 33, 14, 67, 11})
 
 	testutil.Equals(t, uint64(sliceHeaderSize+5), cache.curSize)
 	testutil.Equals(t, float64(cache.curSize), promtest.ToFloat64(cache.currentSize.WithLabelValues(cacheTypePostings)))
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
 
 	// This triggers deadlock logic.
-	cache.StorePostings(ctx, ulid.MustNew(0, nil), labels.Label{Name: "test1", Value: "1"}, []byte{42})
+	cache.StorePostings(ulid.MustNew(0, nil), labels.Label{Name: "test1", Value: "1"}, []byte{42})
 
 	testutil.Equals(t, uint64(sliceHeaderSize+1), cache.curSize)
 	testutil.Equals(t, float64(cache.curSize), promtest.ToFloat64(cache.currentSize.WithLabelValues(cacheTypePostings)))
@@ -115,7 +114,7 @@ func TestInMemoryIndexCache_UpdateItem(t *testing.T) {
 	})
 
 	metrics := prometheus.NewRegistry()
-	cache, err := NewInMemoryIndexCacheWithConfig(log.NewSyncLogger(errorLogger), metrics, InMemoryIndexCacheConfig{
+	cache, err := NewInMemoryIndexCacheWithConfig(log.NewSyncLogger(errorLogger), nil, metrics, InMemoryIndexCacheConfig{
 		MaxItemSize: maxSize,
 		MaxSize:     maxSize,
 	})
@@ -123,6 +122,7 @@ func TestInMemoryIndexCache_UpdateItem(t *testing.T) {
 
 	uid := func(id storage.SeriesRef) ulid.ULID { return ulid.MustNew(uint64(id), nil) }
 	lbl := labels.Label{Name: "foo", Value: "bar"}
+	matcher := labels.MustNewMatcher(labels.MatchEqual, "foo", "bar")
 	ctx := context.Background()
 
 	for _, tt := range []struct {
@@ -132,7 +132,7 @@ func TestInMemoryIndexCache_UpdateItem(t *testing.T) {
 	}{
 		{
 			typ: cacheTypePostings,
-			set: func(id storage.SeriesRef, b []byte) { cache.StorePostings(ctx, uid(id), lbl, b) },
+			set: func(id storage.SeriesRef, b []byte) { cache.StorePostings(uid(id), lbl, b) },
 			get: func(id storage.SeriesRef) ([]byte, bool) {
 				hits, _ := cache.FetchMultiPostings(ctx, uid(id), []labels.Label{lbl})
 				b, ok := hits[lbl]
@@ -142,12 +142,21 @@ func TestInMemoryIndexCache_UpdateItem(t *testing.T) {
 		},
 		{
 			typ: cacheTypeSeries,
-			set: func(id storage.SeriesRef, b []byte) { cache.StoreSeries(ctx, uid(id), id, b) },
+			set: func(id storage.SeriesRef, b []byte) { cache.StoreSeries(uid(id), id, b) },
 			get: func(id storage.SeriesRef) ([]byte, bool) {
 				hits, _ := cache.FetchMultiSeries(ctx, uid(id), []storage.SeriesRef{id})
 				b, ok := hits[id]
 
 				return b, ok
+			},
+		},
+		{
+			typ: cacheTypeExpandedPostings,
+			set: func(id storage.SeriesRef, b []byte) {
+				cache.StoreExpandedPostings(uid(id), []*labels.Matcher{matcher}, b)
+			},
+			get: func(id storage.SeriesRef) ([]byte, bool) {
+				return cache.FetchExpandedPostings(ctx, uid(id), []*labels.Matcher{matcher})
 			},
 		},
 	} {
@@ -199,7 +208,7 @@ func TestInMemoryIndexCache_UpdateItem(t *testing.T) {
 // This should not happen as we hardcode math.MaxInt, but we still add test to check this out.
 func TestInMemoryIndexCache_MaxNumberOfItemsHit(t *testing.T) {
 	metrics := prometheus.NewRegistry()
-	cache, err := NewInMemoryIndexCacheWithConfig(log.NewNopLogger(), metrics, InMemoryIndexCacheConfig{
+	cache, err := NewInMemoryIndexCacheWithConfig(log.NewNopLogger(), nil, metrics, InMemoryIndexCacheConfig{
 		MaxItemSize: 2*sliceHeaderSize + 10,
 		MaxSize:     2*sliceHeaderSize + 10,
 	})
@@ -210,11 +219,10 @@ func TestInMemoryIndexCache_MaxNumberOfItemsHit(t *testing.T) {
 	cache.lru = l
 
 	id := ulid.MustNew(0, nil)
-	ctx := context.Background()
 
-	cache.StorePostings(ctx, id, labels.Label{Name: "test", Value: "123"}, []byte{42, 33})
-	cache.StorePostings(ctx, id, labels.Label{Name: "test", Value: "124"}, []byte{42, 33})
-	cache.StorePostings(ctx, id, labels.Label{Name: "test", Value: "125"}, []byte{42, 33})
+	cache.StorePostings(id, labels.Label{Name: "test", Value: "123"}, []byte{42, 33})
+	cache.StorePostings(id, labels.Label{Name: "test", Value: "124"}, []byte{42, 33})
+	cache.StorePostings(id, labels.Label{Name: "test", Value: "125"}, []byte{42, 33})
 
 	testutil.Equals(t, uint64(2*sliceHeaderSize+4), cache.curSize)
 	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.overflow.WithLabelValues(cacheTypePostings)))
@@ -223,15 +231,15 @@ func TestInMemoryIndexCache_MaxNumberOfItemsHit(t *testing.T) {
 	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.evicted.WithLabelValues(cacheTypeSeries)))
 	testutil.Equals(t, float64(3), promtest.ToFloat64(cache.added.WithLabelValues(cacheTypePostings)))
 	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.added.WithLabelValues(cacheTypeSeries)))
-	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.requests.WithLabelValues(cacheTypePostings)))
-	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.requests.WithLabelValues(cacheTypeSeries)))
-	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.hits.WithLabelValues(cacheTypePostings)))
-	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.hits.WithLabelValues(cacheTypeSeries)))
+	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.commonMetrics.requestTotal.WithLabelValues(cacheTypePostings)))
+	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.commonMetrics.requestTotal.WithLabelValues(cacheTypeSeries)))
+	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.commonMetrics.hitsTotal.WithLabelValues(cacheTypePostings)))
+	testutil.Equals(t, float64(0), promtest.ToFloat64(cache.commonMetrics.hitsTotal.WithLabelValues(cacheTypeSeries)))
 }
 
 func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 	metrics := prometheus.NewRegistry()
-	cache, err := NewInMemoryIndexCacheWithConfig(log.NewNopLogger(), metrics, InMemoryIndexCacheConfig{
+	cache, err := NewInMemoryIndexCacheWithConfig(log.NewNopLogger(), nil, metrics, InMemoryIndexCacheConfig{
 		MaxItemSize: 2*sliceHeaderSize + 5,
 		MaxSize:     2*sliceHeaderSize + 5,
 	})
@@ -250,7 +258,7 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 	testutil.Equals(t, []labels.Label{lbls}, pMisses)
 
 	// Add sliceHeaderSize + 2 bytes.
-	cache.StorePostings(ctx, id, lbls, []byte{42, 33})
+	cache.StorePostings(id, lbls, []byte{42, 33})
 	testutil.Equals(t, uint64(sliceHeaderSize+2), cache.curSize)
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
 	testutil.Equals(t, float64(sliceHeaderSize+2), promtest.ToFloat64(cache.currentSize.WithLabelValues(cacheTypePostings)))
@@ -276,7 +284,7 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 	testutil.Equals(t, []labels.Label{{Name: "test", Value: "124"}}, pMisses)
 
 	// Add sliceHeaderSize + 3 more bytes.
-	cache.StoreSeries(ctx, id, 1234, []byte{222, 223, 224})
+	cache.StoreSeries(id, 1234, []byte{222, 223, 224})
 	testutil.Equals(t, uint64(2*sliceHeaderSize+5), cache.curSize)
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
 	testutil.Equals(t, float64(sliceHeaderSize+2), promtest.ToFloat64(cache.currentSize.WithLabelValues(cacheTypePostings)))
@@ -300,7 +308,7 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 	for i := 0; i < sliceHeaderSize; i++ {
 		v = append(v, 3)
 	}
-	cache.StorePostings(ctx, id, lbls2, v)
+	cache.StorePostings(id, lbls2, v)
 
 	testutil.Equals(t, uint64(2*sliceHeaderSize+5), cache.curSize)
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
@@ -328,7 +336,7 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 	testutil.Equals(t, emptyPostingsMisses, pMisses)
 
 	// Add same item again.
-	cache.StorePostings(ctx, id, lbls2, v)
+	cache.StorePostings(id, lbls2, v)
 
 	testutil.Equals(t, uint64(2*sliceHeaderSize+5), cache.curSize)
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
@@ -347,7 +355,7 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 	testutil.Equals(t, emptyPostingsMisses, pMisses)
 
 	// Add too big item.
-	cache.StorePostings(ctx, id, labels.Label{Name: "test", Value: "toobig"}, append(v, 5))
+	cache.StorePostings(id, labels.Label{Name: "test", Value: "toobig"}, append(v, 5))
 	testutil.Equals(t, uint64(2*sliceHeaderSize+5), cache.curSize)
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
 	testutil.Equals(t, float64(2*sliceHeaderSize+5), promtest.ToFloat64(cache.currentSize.WithLabelValues(cacheTypePostings)))
@@ -380,7 +388,7 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 
 	lbls3 := labels.Label{Name: "test", Value: "124"}
 
-	cache.StorePostings(ctx, id, lbls3, []byte{})
+	cache.StorePostings(id, lbls3, []byte{})
 
 	testutil.Equals(t, uint64(sliceHeaderSize), cache.curSize)
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
@@ -400,7 +408,7 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 
 	// nil works and still allocates empty slice.
 	lbls4 := labels.Label{Name: "test", Value: "125"}
-	cache.StorePostings(ctx, id, lbls4, []byte(nil))
+	cache.StorePostings(id, lbls4, []byte(nil))
 
 	testutil.Equals(t, 2*uint64(sliceHeaderSize), cache.curSize)
 	testutil.Equals(t, float64(2), promtest.ToFloat64(cache.current.WithLabelValues(cacheTypePostings)))
@@ -421,8 +429,8 @@ func TestInMemoryIndexCache_Eviction_WithMetrics(t *testing.T) {
 	// Other metrics.
 	testutil.Equals(t, float64(4), promtest.ToFloat64(cache.added.WithLabelValues(cacheTypePostings)))
 	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.added.WithLabelValues(cacheTypeSeries)))
-	testutil.Equals(t, float64(9), promtest.ToFloat64(cache.requests.WithLabelValues(cacheTypePostings)))
-	testutil.Equals(t, float64(2), promtest.ToFloat64(cache.requests.WithLabelValues(cacheTypeSeries)))
-	testutil.Equals(t, float64(5), promtest.ToFloat64(cache.hits.WithLabelValues(cacheTypePostings)))
-	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.hits.WithLabelValues(cacheTypeSeries)))
+	testutil.Equals(t, float64(9), promtest.ToFloat64(cache.commonMetrics.requestTotal.WithLabelValues(cacheTypePostings)))
+	testutil.Equals(t, float64(2), promtest.ToFloat64(cache.commonMetrics.requestTotal.WithLabelValues(cacheTypeSeries)))
+	testutil.Equals(t, float64(5), promtest.ToFloat64(cache.commonMetrics.hitsTotal.WithLabelValues(cacheTypePostings)))
+	testutil.Equals(t, float64(1), promtest.ToFloat64(cache.commonMetrics.hitsTotal.WithLabelValues(cacheTypeSeries)))
 }

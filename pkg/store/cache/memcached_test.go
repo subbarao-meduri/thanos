@@ -86,13 +86,13 @@ func TestMemcachedIndexCache_FetchMultiPostings(t *testing.T) {
 	for testName, testData := range tests {
 		t.Run(testName, func(t *testing.T) {
 			memcached := newMockedMemcachedClient(testData.mockedErr)
-			c, err := NewRemoteIndexCache(log.NewNopLogger(), memcached, nil)
+			c, err := NewRemoteIndexCache(log.NewNopLogger(), memcached, nil, nil)
 			testutil.Ok(t, err)
 
 			// Store the postings expected before running the test.
 			ctx := context.Background()
 			for _, p := range testData.setup {
-				c.StorePostings(ctx, p.block, p.label, p.value)
+				c.StorePostings(p.block, p.label, p.value)
 			}
 
 			// Fetch postings from cached and assert on it.
@@ -101,10 +101,97 @@ func TestMemcachedIndexCache_FetchMultiPostings(t *testing.T) {
 			testutil.Equals(t, testData.expectedMisses, misses)
 
 			// Assert on metrics.
-			testutil.Equals(t, float64(len(testData.fetchLabels)), prom_testutil.ToFloat64(c.requests.WithLabelValues(cacheTypePostings)))
-			testutil.Equals(t, float64(len(testData.expectedHits)), prom_testutil.ToFloat64(c.hits.WithLabelValues(cacheTypePostings)))
-			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.requests.WithLabelValues(cacheTypeSeries)))
-			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.hits.WithLabelValues(cacheTypeSeries)))
+			testutil.Equals(t, float64(len(testData.fetchLabels)), prom_testutil.ToFloat64(c.postingRequests))
+			testutil.Equals(t, float64(len(testData.expectedHits)), prom_testutil.ToFloat64(c.postingHits))
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.seriesRequests))
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.seriesHits))
+		})
+	}
+}
+
+func TestMemcachedIndexCache_FetchExpandedPostings(t *testing.T) {
+	t.Parallel()
+
+	// Init some data to conveniently define test cases later one.
+	block1 := ulid.MustNew(1, nil)
+	block2 := ulid.MustNew(2, nil)
+	matcher1 := labels.MustNewMatcher(labels.MatchEqual, "cluster", "us")
+	matcher2 := labels.MustNewMatcher(labels.MatchEqual, "job", "thanos")
+	matcher3 := labels.MustNewMatcher(labels.MatchRegexp, "__name__", "up")
+	value1 := []byte{1}
+	value2 := []byte{2}
+
+	tests := map[string]struct {
+		setup         []mockedExpandedPostings
+		mockedErr     error
+		fetchBlockID  ulid.ULID
+		fetchMatchers []*labels.Matcher
+		expectedHit   bool
+		expectedValue []byte
+	}{
+		"should return no hits on empty cache": {
+			setup:         []mockedExpandedPostings{},
+			fetchBlockID:  block1,
+			fetchMatchers: []*labels.Matcher{matcher1, matcher2},
+			expectedHit:   false,
+		},
+		"should return no misses on 100% hit ratio": {
+			setup: []mockedExpandedPostings{
+				{block: block1, matchers: []*labels.Matcher{matcher1}, value: value1},
+			},
+			fetchBlockID:  block1,
+			fetchMatchers: []*labels.Matcher{matcher1},
+			expectedHit:   true,
+			expectedValue: value1,
+		},
+		"Cache miss when matchers key doesn't match": {
+			setup: []mockedExpandedPostings{
+				{block: block1, matchers: []*labels.Matcher{matcher1}, value: value1},
+				{block: block2, matchers: []*labels.Matcher{matcher2}, value: value2},
+			},
+			fetchBlockID:  block1,
+			fetchMatchers: []*labels.Matcher{matcher1, matcher2},
+			expectedHit:   false,
+		},
+		"should return no hits on memcached error": {
+			setup: []mockedExpandedPostings{
+				{block: block1, matchers: []*labels.Matcher{matcher3}, value: value1},
+			},
+			mockedErr:     errors.New("mocked error"),
+			fetchBlockID:  block1,
+			fetchMatchers: []*labels.Matcher{matcher3},
+			expectedHit:   false,
+		},
+	}
+
+	for testName, testData := range tests {
+		t.Run(testName, func(t *testing.T) {
+			memcached := newMockedMemcachedClient(testData.mockedErr)
+			c, err := NewRemoteIndexCache(log.NewNopLogger(), memcached, nil, nil)
+			testutil.Ok(t, err)
+
+			// Store the postings expected before running the test.
+			ctx := context.Background()
+			for _, p := range testData.setup {
+				c.StoreExpandedPostings(p.block, p.matchers, p.value)
+			}
+
+			// Fetch postings from cached and assert on it.
+			val, hit := c.FetchExpandedPostings(ctx, testData.fetchBlockID, testData.fetchMatchers)
+			testutil.Equals(t, testData.expectedHit, hit)
+			if hit {
+				testutil.Equals(t, testData.expectedValue, val)
+			}
+
+			// Assert on metrics.
+			testutil.Equals(t, 1.0, prom_testutil.ToFloat64(c.expandedPostingRequests))
+			if testData.expectedHit {
+				testutil.Equals(t, 1.0, prom_testutil.ToFloat64(c.expandedPostingHits))
+			}
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.postingRequests))
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.postingHits))
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.seriesRequests))
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.seriesHits))
 		})
 	}
 }
@@ -175,13 +262,13 @@ func TestMemcachedIndexCache_FetchMultiSeries(t *testing.T) {
 	for testName, testData := range tests {
 		t.Run(testName, func(t *testing.T) {
 			memcached := newMockedMemcachedClient(testData.mockedErr)
-			c, err := NewRemoteIndexCache(log.NewNopLogger(), memcached, nil)
+			c, err := NewRemoteIndexCache(log.NewNopLogger(), memcached, nil, nil)
 			testutil.Ok(t, err)
 
 			// Store the series expected before running the test.
 			ctx := context.Background()
 			for _, p := range testData.setup {
-				c.StoreSeries(ctx, p.block, p.id, p.value)
+				c.StoreSeries(p.block, p.id, p.value)
 			}
 
 			// Fetch series from cached and assert on it.
@@ -190,10 +277,10 @@ func TestMemcachedIndexCache_FetchMultiSeries(t *testing.T) {
 			testutil.Equals(t, testData.expectedMisses, misses)
 
 			// Assert on metrics.
-			testutil.Equals(t, float64(len(testData.fetchIds)), prom_testutil.ToFloat64(c.requests.WithLabelValues(cacheTypeSeries)))
-			testutil.Equals(t, float64(len(testData.expectedHits)), prom_testutil.ToFloat64(c.hits.WithLabelValues(cacheTypeSeries)))
-			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.requests.WithLabelValues(cacheTypePostings)))
-			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.hits.WithLabelValues(cacheTypePostings)))
+			testutil.Equals(t, float64(len(testData.fetchIds)), prom_testutil.ToFloat64(c.seriesRequests))
+			testutil.Equals(t, float64(len(testData.expectedHits)), prom_testutil.ToFloat64(c.seriesHits))
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.postingRequests))
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(c.postingHits))
 		})
 	}
 }
@@ -202,6 +289,12 @@ type mockedPostings struct {
 	block ulid.ULID
 	label labels.Label
 	value []byte
+}
+
+type mockedExpandedPostings struct {
+	block    ulid.ULID
+	matchers []*labels.Matcher
+	value    []byte
 }
 
 type mockedSeries struct {
@@ -238,7 +331,7 @@ func (c *mockedMemcachedClient) GetMulti(ctx context.Context, keys []string) map
 	return hits
 }
 
-func (c *mockedMemcachedClient) SetAsync(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+func (c *mockedMemcachedClient) SetAsync(key string, value []byte, ttl time.Duration) error {
 	c.cache[key] = value
 
 	return nil

@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thanos-io/thanos/pkg/extprom"
+
 	"github.com/go-kit/log"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
@@ -140,9 +142,9 @@ func TestUpload(t *testing.T) {
 		// Full block.
 		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc))
 		testutil.Equals(t, 3, len(bkt.Objects()))
-		testutil.Equals(t, 3751, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
+		testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
 		testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]))
-		testutil.Equals(t, 546, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
+		testutil.Equals(t, 567, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
 
 		// File stats are gathered.
 		testutil.Equals(t, fmt.Sprintf(`{
@@ -172,7 +174,7 @@ func TestUpload(t *testing.T) {
 		"files": [
 			{
 				"rel_path": "chunks/000001",
-				"size_bytes": 3751
+				"size_bytes": 3727
 			},
 			{
 				"rel_path": "index",
@@ -181,7 +183,8 @@ func TestUpload(t *testing.T) {
 			{
 				"rel_path": "meta.json"
 			}
-		]
+		],
+		"index_stats": {}
 	}
 }
 `, b1.String(), b1.String()), string(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
@@ -190,9 +193,9 @@ func TestUpload(t *testing.T) {
 		// Test Upload is idempotent.
 		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc))
 		testutil.Equals(t, 3, len(bkt.Objects()))
-		testutil.Equals(t, 3751, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
+		testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
 		testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]))
-		testutil.Equals(t, 546, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
+		testutil.Equals(t, 567, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
 	}
 	{
 		// Upload with no external labels should be blocked.
@@ -222,9 +225,9 @@ func TestUpload(t *testing.T) {
 		err = UploadPromBlock(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b2.String()), metadata.NoneFunc)
 		testutil.Ok(t, err)
 		testutil.Equals(t, 6, len(bkt.Objects()))
-		testutil.Equals(t, 3736, len(bkt.Objects()[path.Join(b2.String(), ChunksDirname, "000001")]))
+		testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b2.String(), ChunksDirname, "000001")]))
 		testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b2.String(), IndexFilename)]))
-		testutil.Equals(t, 525, len(bkt.Objects()[path.Join(b2.String(), MetaFilename)]))
+		testutil.Equals(t, 546, len(bkt.Objects()[path.Join(b2.String(), MetaFilename)]))
 	}
 }
 
@@ -448,7 +451,7 @@ func TestHashDownload(t *testing.T) {
 
 	bkt := objstore.NewInMemBucket()
 	r := prometheus.NewRegistry()
-	instrumentedBkt := objstore.BucketWithMetrics("test", bkt, r)
+	instrumentedBkt := objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", r), "test")
 
 	b1, err := e2eutil.CreateBlockWithTombstone(ctx, tmpDir, []labels.Labels{
 		{{Name: "a", Value: "1"}},

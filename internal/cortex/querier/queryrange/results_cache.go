@@ -31,8 +31,6 @@ import (
 	"github.com/thanos-io/thanos/internal/cortex/cortexpb"
 	"github.com/thanos-io/thanos/internal/cortex/querier"
 	"github.com/thanos-io/thanos/internal/cortex/tenant"
-	"github.com/thanos-io/thanos/internal/cortex/util/flagext"
-	util_log "github.com/thanos-io/thanos/internal/cortex/util/log"
 	"github.com/thanos-io/thanos/internal/cortex/util/spanlogger"
 	"github.com/thanos-io/thanos/internal/cortex/util/validation"
 )
@@ -62,8 +60,6 @@ func (cfg *ResultsCacheConfig) RegisterFlags(f *flag.FlagSet) {
 
 	f.StringVar(&cfg.Compression, "frontend.compression", "", "Use compression in results cache. Supported values are: 'snappy' and '' (disable compression).")
 	f.BoolVar(&cfg.CacheQueryableSamplesStats, "frontend.cache-queryable-samples-stats", false, "Cache Statistics queryable samples on results cache.")
-	//lint:ignore faillint Need to pass the global logger like this for warning on deprecated methods
-	flagext.DeprecatedFlag(f, "frontend.cache-split-interval", "Deprecated: The maximum interval expected for each request, results will be cached per single interval. This behavior is now determined by querier.split-queries-by-interval.", util_log.Logger)
 }
 
 func (cfg *ResultsCacheConfig) Validate(qCfg querier.Config) error {
@@ -98,9 +94,10 @@ func (PrometheusResponseExtractor) Extract(start, end int64, from Response) Resp
 	return &PrometheusResponse{
 		Status: StatusSuccess,
 		Data: PrometheusData{
-			ResultType: promRes.Data.ResultType,
-			Result:     extractMatrix(start, end, promRes.Data.Result),
-			Stats:      extractStats(start, end, promRes.Data.Stats),
+			ResultType:  promRes.Data.ResultType,
+			Result:      extractMatrix(start, end, promRes.Data.Result),
+			Stats:       extractStats(start, end, promRes.Data.Stats),
+			Explanation: promRes.Data.Explanation,
 		},
 		Headers: promRes.Headers,
 	}
@@ -113,9 +110,10 @@ func (PrometheusResponseExtractor) ResponseWithoutHeaders(resp Response) Respons
 	return &PrometheusResponse{
 		Status: StatusSuccess,
 		Data: PrometheusData{
-			ResultType: promRes.Data.ResultType,
-			Result:     promRes.Data.Result,
-			Stats:      promRes.Data.Stats,
+			ResultType:  promRes.Data.ResultType,
+			Result:      promRes.Data.Result,
+			Stats:       promRes.Data.Stats,
+			Explanation: promRes.Data.Explanation,
 		},
 	}
 }
@@ -126,8 +124,9 @@ func (PrometheusResponseExtractor) ResponseWithoutStats(resp Response) Response 
 	return &PrometheusResponse{
 		Status: StatusSuccess,
 		Data: PrometheusData{
-			ResultType: promRes.Data.ResultType,
-			Result:     promRes.Data.Result,
+			ResultType:  promRes.Data.ResultType,
+			Result:      promRes.Data.Result,
+			Explanation: promRes.Data.Explanation,
 		},
 		Headers: promRes.Headers,
 	}
@@ -404,7 +403,7 @@ func (s resultsCache) handleHit(ctx context.Context, r Request, extents []Extent
 		return nil, nil, err
 	}
 	if len(requests) == 0 {
-		response, err := s.merger.MergeResponse(responses...)
+		response, err := s.merger.MergeResponse(r, responses...)
 		// No downstream requests so no need to write back to the cache.
 		return response, nil, err
 	}
@@ -466,7 +465,7 @@ func (s resultsCache) handleHit(ctx context.Context, r Request, extents []Extent
 		if err != nil {
 			return nil, nil, err
 		}
-		merged, err := s.merger.MergeResponse(accumulator.Response, currentRes)
+		merged, err := s.merger.MergeResponse(r, accumulator.Response, currentRes)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -478,7 +477,7 @@ func (s resultsCache) handleHit(ctx context.Context, r Request, extents []Extent
 		return nil, nil, err
 	}
 
-	response, err := s.merger.MergeResponse(responses...)
+	response, err := s.merger.MergeResponse(r, responses...)
 	return response, mergedExtents, err
 }
 
@@ -686,15 +685,28 @@ func extractMatrix(start, end int64, matrix []SampleStream) []SampleStream {
 
 func extractSampleStream(start, end int64, stream SampleStream) (SampleStream, bool) {
 	result := SampleStream{
-		Labels:  stream.Labels,
-		Samples: make([]cortexpb.Sample, 0, len(stream.Samples)),
+		Labels: stream.Labels,
 	}
+
+	if len(stream.Samples) > 0 {
+		result.Samples = make([]cortexpb.Sample, 0, len(stream.Samples))
+	}
+
+	if len(stream.Histograms) > 0 {
+		result.Histograms = make([]SampleHistogramPair, 0, len(stream.Histograms))
+	}
+
 	for _, sample := range stream.Samples {
 		if start <= sample.TimestampMs && sample.TimestampMs <= end {
 			result.Samples = append(result.Samples, sample)
 		}
 	}
-	if len(result.Samples) == 0 {
+	for _, histogram := range stream.Histograms {
+		if start <= int64(histogram.GetTimestamp()) && int64(histogram.GetTimestamp()) <= end {
+			result.Histograms = append(result.Histograms, histogram)
+		}
+	}
+	if len(result.Samples) == 0 && len(result.Histograms) == 0 {
 		return SampleStream{}, false
 	}
 	return result, true

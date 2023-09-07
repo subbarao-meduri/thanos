@@ -86,15 +86,17 @@ func TestRequest(t *testing.T) {
 }
 
 func TestResponse(t *testing.T) {
-	r := *parsedResponse
-	r.Headers = respHeaders
 	for i, tc := range []struct {
 		body     string
 		expected *PrometheusResponse
 	}{
 		{
 			body:     responseBody,
-			expected: &r,
+			expected: withHeaders(parsedResponse, respHeaders),
+		},
+		{
+			body:     histogramResponseBody,
+			expected: withHeaders(parsedHistogramResponse, respHeaders),
 		},
 	} {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
@@ -127,7 +129,7 @@ func TestResponseWithStats(t *testing.T) {
 		expected *PrometheusResponse
 	}{
 		{
-			body: `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"foo":"bar"},"values":[[1536673680,"137"],[1536673780,"137"]]}],"stats":{"samples":{"totalQueryableSamples":10,"totalQueryableSamplesPerStep":[[1536673680,5],[1536673780,5]]}}}}`,
+			body: `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"foo":"bar"},"values":[[1536673680,"137"],[1536673780,"137"]]}],"stats":{"samples":{"totalQueryableSamples":10,"totalQueryableSamplesPerStep":[[1536673680,5],[1536673780,5]]}},"explanation":null}}`,
 			expected: &PrometheusResponse{
 				Status: "success",
 				Data: PrometheusData{
@@ -653,7 +655,7 @@ func TestMergeAPIResponses(t *testing.T) {
 			},
 		}} {
 		t.Run(tc.name, func(t *testing.T) {
-			output, err := PrometheusCodec.MergeResponse(tc.input...)
+			output, err := PrometheusCodec.MergeResponse(nil, tc.input...)
 			require.NoError(t, err)
 			require.Equal(t, tc.expected, output)
 		})
@@ -666,4 +668,10 @@ func mustParse(t *testing.T, response string) Response {
 	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	require.NoError(t, json.Unmarshal([]byte(response), &resp))
 	return &resp
+}
+
+func withHeaders(response *PrometheusResponse, headers []*PrometheusResponseHeader) *PrometheusResponse {
+	r := *response
+	r.Headers = headers
+	return &r
 }

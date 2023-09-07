@@ -76,7 +76,7 @@ func httpInstrumentationHandler(baseLabels prometheus.Labels, metrics *defaultMe
 
 						requestLabels := prometheus.Labels{"code": wd.Status(), "method": strings.ToLower(r.Method)}
 						observer := metrics.requestDuration.MustCurryWith(baseLabels).With(requestLabels)
-						observer.Observe(time.Since(now).Seconds())
+						requestDuration := time.Since(now).Seconds()
 
 						// If we find a tracingID we'll expose it as Exemplar.
 						var (
@@ -97,18 +97,20 @@ func httpInstrumentationHandler(baseLabels prometheus.Labels, metrics *defaultMe
 						// If OpenTracing span not found, try OTEL.
 						if !OTfound {
 							span := trace.SpanFromContext(r.Context())
-							if span != nil {
-								traceID = span.SpanContext().SpanID().String()
+							if span != nil && span.SpanContext().IsSampled() {
+								traceID = span.SpanContext().TraceID().String()
 							}
 						}
 
 						if traceID != "" {
 							observer.(prometheus.ExemplarObserver).ObserveWithExemplar(
-								time.Since(now).Seconds(),
+								requestDuration,
 								prometheus.Labels{
 									"traceID": traceID,
 								},
 							)
+						} else {
+							observer.Observe(requestDuration)
 						}
 					}),
 				),

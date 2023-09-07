@@ -22,7 +22,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
+
+	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/client"
+	objstoretracing "github.com/thanos-io/objstore/tracing/opentracing"
 
 	"github.com/thanos-io/thanos/pkg/block/metadata"
 	"github.com/thanos-io/thanos/pkg/component"
@@ -45,6 +48,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/shipper"
 	"github.com/thanos-io/thanos/pkg/store"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
+	"github.com/thanos-io/thanos/pkg/stringset"
 	"github.com/thanos-io/thanos/pkg/targets"
 	"github.com/thanos-io/thanos/pkg/tls"
 )
@@ -109,8 +113,9 @@ func runSidecar(
 		mint: conf.limitMinTime.PrometheusTimestamp(),
 		maxt: math.MaxInt64,
 
-		limitMinTime: conf.limitMinTime,
-		client:       promclient.NewWithTracingClient(logger, httpClient, "thanos-sidecar"),
+		limitMinTime:  conf.limitMinTime,
+		client:        promclient.NewWithTracingClient(logger, httpClient, "thanos-sidecar"),
+		labelNamesSet: stringset.AllStrings(),
 	}
 
 	confContentYaml, err := conf.objStore.Content()
@@ -234,6 +239,19 @@ func runSidecar(
 		}, func(error) {
 			cancel()
 		})
+
+		g.Add(func() error {
+			return runutil.Repeat(10*time.Second, ctx.Done(), func() error {
+				level.Debug(logger).Log("msg", "Starting label names update")
+
+				m.UpdateLabelNames(context.Background())
+
+				level.Debug(logger).Log("msg", "Finished label names update")
+				return nil
+			})
+		}, func(err error) {
+			cancel()
+		})
 	}
 	{
 		ctx, cancel := context.WithCancel(context.Background())
@@ -246,7 +264,7 @@ func runSidecar(
 	{
 		c := promclient.NewWithTracingClient(logger, httpClient, httpconfig.ThanosUserAgent)
 
-		promStore, err := store.NewPrometheusStore(logger, reg, c, conf.prometheus.url, component.Sidecar, m.Labels, m.Timestamps, m.Version)
+		promStore, err := store.NewPrometheusStore(logger, reg, c, conf.prometheus.url, component.Sidecar, m.Labels, m.Timestamps, m.LabelNamesSet, m.Version)
 		if err != nil {
 			return errors.Wrap(err, "create Prometheus store")
 		}
@@ -268,10 +286,11 @@ func runSidecar(
 				if httpProbe.IsReady() {
 					mint, maxt := promStore.Timestamps()
 					return &infopb.StoreInfo{
-						MinTime:           mint,
-						MaxTime:           maxt,
-						SupportsSharding:  true,
-						SendsSortedSeries: true,
+						MinTime:                      mint,
+						MaxTime:                      maxt,
+						SupportsSharding:             true,
+						SupportsWithoutReplicaLabels: true,
+						TsdbInfos:                    promStore.TSDBInfos(),
 					}
 				}
 				return nil
@@ -282,15 +301,17 @@ func runSidecar(
 			info.WithMetricMetadataInfoFunc(),
 		)
 
+		storeServer := store.NewLimitedStoreServer(store.NewInstrumentedStoreServer(reg, promStore), reg, conf.storeRateLimits)
 		s := grpcserver.New(logger, reg, tracer, grpcLogOpts, tagOpts, comp, grpcProbe,
-			grpcserver.WithServer(store.RegisterStoreServer(promStore)),
+			grpcserver.WithServer(store.RegisterStoreServer(storeServer, logger)),
 			grpcserver.WithServer(rules.RegisterRulesServer(rules.NewPrometheus(conf.prometheus.url, c, m.Labels))),
 			grpcserver.WithServer(targets.RegisterTargetsServer(targets.NewPrometheus(conf.prometheus.url, c, m.Labels))),
 			grpcserver.WithServer(meta.RegisterMetadataServer(meta.NewPrometheus(conf.prometheus.url, c))),
 			grpcserver.WithServer(exemplars.RegisterExemplarsServer(exemplarSrv)),
 			grpcserver.WithServer(info.RegisterInfoServer(infoSrv)),
 			grpcserver.WithListen(conf.grpc.bindAddress),
-			grpcserver.WithGracePeriod(time.Duration(conf.grpc.gracePeriod)),
+			grpcserver.WithGracePeriod(conf.grpc.gracePeriod),
+			grpcserver.WithMaxConnAge(conf.grpc.maxConnectionAge),
 			grpcserver.WithTLSConfig(tlsCfg),
 		)
 		g.Add(func() error {
@@ -305,10 +326,11 @@ func runSidecar(
 	if uploads {
 		// The background shipper continuously scans the data directory and uploads
 		// new blocks to Google Cloud Storage or an S3-compatible storage service.
-		bkt, err := client.NewBucket(logger, confContentYaml, reg, component.Sidecar.String())
+		bkt, err := client.NewBucket(logger, confContentYaml, component.Sidecar.String())
 		if err != nil {
 			return err
 		}
+		bkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
 		// Ensure we close up everything properly.
 		defer func() {
@@ -338,8 +360,9 @@ func runSidecar(
 				return errors.Wrapf(err, "aborting as no external labels found after waiting %s", promReadyTimeout)
 			}
 
+			uploadCompactedFunc := func() bool { return conf.shipper.uploadCompacted }
 			s := shipper.New(logger, reg, conf.tsdb.path, bkt, m.Labels, metadata.SidecarSource,
-				conf.shipper.uploadCompacted, conf.shipper.allowOutOfOrderUpload, metadata.HashFunc(conf.shipper.hashFunc))
+				uploadCompactedFunc, conf.shipper.allowOutOfOrderUpload, metadata.HashFunc(conf.shipper.hashFunc))
 
 			return runutil.Repeat(30*time.Second, ctx.Done(), func() error {
 				if uploaded, err := s.Sync(ctx); err != nil {
@@ -403,15 +426,16 @@ func validatePrometheus(ctx context.Context, client *promclient.Client, logger l
 type promMetadata struct {
 	promURL *url.URL
 
-	mtx         sync.Mutex
-	mint        int64
-	maxt        int64
-	labels      labels.Labels
-	promVersion string
-
+	mtx          sync.Mutex
+	mint         int64
+	maxt         int64
+	labels       labels.Labels
+	promVersion  string
 	limitMinTime thanosmodel.TimeOrDurationValue
 
 	client *promclient.Client
+
+	labelNamesSet stringset.Set
 }
 
 func (s *promMetadata) UpdateLabels(ctx context.Context) error {
@@ -437,6 +461,30 @@ func (s *promMetadata) UpdateTimestamps(mint, maxt int64) {
 
 	s.mint = mint
 	s.maxt = maxt
+}
+
+func (s *promMetadata) UpdateLabelNames(ctx context.Context) {
+	mint, _ := s.Timestamps()
+	labelNames, err := s.client.LabelNamesInGRPC(ctx, s.promURL, nil, mint, time.Now().UnixMilli())
+	if err != nil {
+		s.mtx.Lock()
+		defer s.mtx.Unlock()
+
+		s.labelNamesSet = stringset.AllStrings()
+		return
+	}
+
+	filter := stringset.NewFromStrings(labelNames...)
+	s.mtx.Lock()
+	s.labelNamesSet = filter
+	s.mtx.Unlock()
+}
+
+func (s *promMetadata) LabelNamesSet() stringset.Set {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	return s.labelNamesSet
 }
 
 func (s *promMetadata) Labels() labels.Labels {
@@ -474,15 +522,16 @@ func (s *promMetadata) Version() string {
 }
 
 type sidecarConfig struct {
-	http         httpConfig
-	grpc         grpcConfig
-	prometheus   prometheusConfig
-	tsdb         tsdbConfig
-	reloader     reloaderConfig
-	reqLogConfig *extflag.PathOrContent
-	objStore     extflag.PathOrContent
-	shipper      shipperConfig
-	limitMinTime thanosmodel.TimeOrDurationValue
+	http            httpConfig
+	grpc            grpcConfig
+	prometheus      prometheusConfig
+	tsdb            tsdbConfig
+	reloader        reloaderConfig
+	reqLogConfig    *extflag.PathOrContent
+	objStore        extflag.PathOrContent
+	shipper         shipperConfig
+	limitMinTime    thanosmodel.TimeOrDurationValue
+	storeRateLimits store.SeriesSelectLimits
 }
 
 func (sc *sidecarConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -494,6 +543,7 @@ func (sc *sidecarConfig) registerFlag(cmd extkingpin.FlagClause) {
 	sc.reqLogConfig = extkingpin.RegisterRequestLoggingFlags(cmd)
 	sc.objStore = *extkingpin.RegisterCommonObjStoreFlags(cmd, "", false)
 	sc.shipper.registerFlag(cmd)
+	sc.storeRateLimits.RegisterFlags(cmd)
 	cmd.Flag("min-time", "Start of time range limit to serve. Thanos sidecar will serve only metrics, which happened later than this value. Option can be a constant time in RFC3339 format or time duration relative to current time, such as -1d or 2h45m. Valid duration units are ms, s, m, h, d, w, y.").
 		Default("0000-01-01T00:00:00Z").SetValue(&sc.limitMinTime)
 }
