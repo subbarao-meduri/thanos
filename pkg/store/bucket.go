@@ -59,7 +59,6 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/hintspb"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
-	"github.com/thanos-io/thanos/pkg/stringset"
 	"github.com/thanos-io/thanos/pkg/strutil"
 	"github.com/thanos-io/thanos/pkg/tenancy"
 	"github.com/thanos-io/thanos/pkg/tracing"
@@ -366,9 +365,6 @@ type BucketStore struct {
 
 	enableChunkHashCalculation bool
 
-	bmtx          sync.Mutex
-	labelNamesSet stringset.Set
-
 	blockEstimatedMaxSeriesFunc BlockEstimator
 	blockEstimatedMaxChunkFunc  BlockEstimator
 }
@@ -515,7 +511,6 @@ func NewBucketStore(
 		enableSeriesResponseHints:   enableSeriesResponseHints,
 		enableChunkHashCalculation:  enableChunkHashCalculation,
 		seriesBatchSize:             SeriesBatchSize,
-		labelNamesSet:               stringset.AllStrings(),
 	}
 
 	for _, option := range options {
@@ -1254,7 +1249,7 @@ func debugFoundBlockSetOverview(logger log.Logger, mint, maxt, maxResolutionMill
 
 // Series implements the storepb.StoreServer interface.
 func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store_SeriesServer) (err error) {
-	srv := newFlushableServer(seriesSrv, s.LabelNamesSet(), req.WithoutReplicaLabels)
+	srv := newFlushableServer(seriesSrv, sortingStrategyNone)
 
 	if s.queryGate != nil {
 		tracing.DoInSpan(srv.Context(), "store_query_gate_ismyturn", func(ctx context.Context) {
@@ -1364,16 +1359,19 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 					"block.resolution": blk.meta.Thanos.Downsample.Resolution,
 				})
 
-				if err := blockClient.ExpandPostings(sortedBlockMatchers, seriesLimiter); err != nil {
-					span.Finish()
-					return errors.Wrapf(err, "fetch series for block %s", blk.meta.ULID)
-				}
 				onClose := func() {
 					mtx.Lock()
 					stats = blockClient.MergeStats(stats)
 					mtx.Unlock()
 				}
-				part := newLazyRespSet(
+
+				if err := blockClient.ExpandPostings(sortedBlockMatchers, seriesLimiter); err != nil {
+					onClose()
+					span.Finish()
+					return errors.Wrapf(err, "fetch postings for block %s", blk.meta.ULID)
+				}
+
+				resp := newEagerRespSet(
 					srv.Context(),
 					span,
 					10*time.Minute,
@@ -1384,10 +1382,11 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 					shardMatcher,
 					false,
 					s.metrics.emptyPostingCount,
+					nil,
 				)
 
 				mtx.Lock()
-				respSets = append(respSets, part)
+				respSets = append(respSets, resp)
 				mtx.Unlock()
 
 				return nil
@@ -1690,35 +1689,6 @@ func (s *BucketStore) LabelNames(ctx context.Context, req *storepb.LabelNamesReq
 		Names: strutil.MergeSlices(sets...),
 		Hints: anyHints,
 	}, nil
-}
-
-func (s *BucketStore) UpdateLabelNames() {
-	newSet := stringset.New()
-	for _, b := range s.blocks {
-		labelNames, err := b.indexHeaderReader.LabelNames()
-		if err != nil {
-			level.Warn(s.logger).Log("msg", "error getting label names", "block", b.meta.ULID, "err", err.Error())
-			s.updateLabelNamesSet(stringset.AllStrings())
-			return
-		}
-		for _, l := range labelNames {
-			newSet.Insert(l)
-		}
-	}
-	s.updateLabelNamesSet(newSet)
-}
-
-func (s *BucketStore) updateLabelNamesSet(newSet stringset.Set) {
-	s.bmtx.Lock()
-	s.labelNamesSet = newSet
-	s.bmtx.Unlock()
-}
-
-func (b *BucketStore) LabelNamesSet() stringset.Set {
-	b.bmtx.Lock()
-	defer b.bmtx.Unlock()
-
-	return b.labelNamesSet
 }
 
 func (b *bucketBlock) FilterExtLabelsMatchers(matchers []*labels.Matcher) ([]*labels.Matcher, bool) {
@@ -2568,13 +2538,6 @@ func matchersToPostingGroups(ctx context.Context, lvalsFn func(name string) ([]s
 
 // NOTE: Derived from tsdb.postingsForMatcher. index.Merge is equivalent to map duplication.
 func toPostingGroup(ctx context.Context, lvalsFn func(name string) ([]string, error), m *labels.Matcher) (*postingGroup, []string, error) {
-	if m.Type == labels.MatchRegexp {
-		if vals := findSetMatches(m.Value); len(vals) > 0 {
-			sort.Strings(vals)
-			return newPostingGroup(false, m.Name, vals, nil), nil, nil
-		}
-	}
-
 	// If the matcher selects an empty value, it selects all the series which don't
 	// have the label name set too. See: https://github.com/prometheus/prometheus/issues/3575
 	// and https://github.com/prometheus/prometheus/pull/3578#issuecomment-351653555.
@@ -2612,6 +2575,12 @@ func toPostingGroup(ctx context.Context, lvalsFn func(name string) ([]string, er
 		}
 
 		return newPostingGroup(true, m.Name, nil, toRemove), vals, nil
+	}
+	if m.Type == labels.MatchRegexp {
+		if vals := findSetMatches(m.Value); len(vals) > 0 {
+			sort.Strings(vals)
+			return newPostingGroup(false, m.Name, vals, nil), nil, nil
+		}
 	}
 
 	// Fast-path for equal matching.
@@ -2844,7 +2813,7 @@ func (r *bucketIndexReader) fetchPostings(ctx context.Context, keys []labels.Lab
 			r.stats.PostingsFetchDurationSum += time.Since(begin)
 			r.mtx.Unlock()
 
-			if rdr.Error() != nil {
+			if err := rdr.Error(); err != nil {
 				return errors.Wrap(err, "reading postings")
 			}
 			return nil
@@ -3522,6 +3491,7 @@ type queryStats struct {
 func (s queryStats) merge(o *queryStats) *queryStats {
 	s.blocksQueried += o.blocksQueried
 
+	s.postingsToFetch += o.postingsToFetch
 	s.postingsTouched += o.postingsTouched
 	s.PostingsTouchedSizeSum += o.PostingsTouchedSizeSum
 	s.postingsFetched += o.postingsFetched
