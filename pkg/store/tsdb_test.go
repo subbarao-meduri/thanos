@@ -15,10 +15,10 @@ import (
 	"github.com/cespare/xxhash"
 	"github.com/go-kit/log"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
 
 	"github.com/efficientgo/core/testutil"
-
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
@@ -226,6 +226,20 @@ func TestTSDBStore_Series(t *testing.T) {
 			return
 		}
 	}
+}
+
+func TestTSDBStore_LabelAPIs(t *testing.T) {
+	t.Cleanup(func() { custom.TolerantVerifyLeak(t) })
+	testLabelAPIs(t, func(extLset labels.Labels, appendFn func(app storage.Appender)) storepb.StoreServer {
+		db, err := e2eutil.NewTSDB()
+		testutil.Ok(t, err)
+		t.Cleanup(func() { testutil.Ok(t, db.Close()) })
+
+		tsdbStore := NewTSDBStore(nil, db, component.Rule, extLset)
+
+		appendFn(db.Appender(context.Background()))
+		return tsdbStore
+	})
 }
 
 // Regression test for https://github.com/thanos-io/thanos/issues/1038.
@@ -581,7 +595,10 @@ func benchTSDBStoreSeries(t testutil.TB, totalSamples, totalSeries int) {
 		}
 
 		_ = createBlockFromHead(t, tmpDir, head)
-		testutil.Ok(t, head.Close())
+		t.Cleanup(func() {
+			testutil.Ok(t, head.Close())
+		})
+
 	}
 
 	head2, created := storetestutil.CreateHeadWithSeries(t, 3, storetestutil.HeadGenOptions{
@@ -591,7 +608,9 @@ func benchTSDBStoreSeries(t testutil.TB, totalSamples, totalSeries int) {
 		WithWAL:          true,
 		Random:           random,
 	})
-	testutil.Ok(t, head2.Close())
+	t.Cleanup(func() {
+		testutil.Ok(t, head2.Close())
+	})
 
 	for i := 0; i < len(created); i++ {
 		resps[3] = append(resps[3], storepb.NewSeriesResponse(created[i]))

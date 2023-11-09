@@ -49,7 +49,7 @@ func newPostingsReaderBuilder(ctx context.Context, r *bufio.Reader, postings []p
 }
 
 func getInt32(r io.Reader, buf []byte) (uint32, error) {
-	read, err := io.ReadFull(r, buf)
+	read, err := r.Read(buf)
 	if err != nil {
 		return 0, errors.Wrap(err, "reading")
 	}

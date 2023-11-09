@@ -9,35 +9,24 @@ import (
 
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
-)
-
-type sortingStrategy uint64
-
-const (
-	sortingStrategyStore sortingStrategy = iota + 1
-	sortingStrategyNone
+	"github.com/thanos-io/thanos/pkg/stringset"
 )
 
 // flushableServer is an extension of storepb.Store_SeriesServer with a Flush method.
 type flushableServer interface {
 	storepb.Store_SeriesServer
-
 	Flush() error
 }
 
 func newFlushableServer(
 	upstream storepb.Store_SeriesServer,
-	sortingsortingStrategy sortingStrategy,
+	labelNames stringset.Set,
+	replicaLabels []string,
 ) flushableServer {
-	switch sortingsortingStrategy {
-	case sortingStrategyStore:
+	if labelNames.HasAny(replicaLabels) {
 		return &resortingServer{Store_SeriesServer: upstream}
-	case sortingStrategyNone:
-		return &passthroughServer{Store_SeriesServer: upstream}
-	default:
-		// should not happen.
-		panic("unexpected sorting strategy")
 	}
+	return &passthroughServer{Store_SeriesServer: upstream}
 }
 
 // passthroughServer is a flushableServer that forwards all data to

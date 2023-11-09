@@ -42,6 +42,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
+	"github.com/thanos-io/thanos/pkg/stringset"
 	"github.com/thanos-io/thanos/pkg/tracing"
 )
 
@@ -53,6 +54,7 @@ type PrometheusStore struct {
 	buffers          sync.Pool
 	component        component.StoreAPI
 	externalLabelsFn func() labels.Labels
+	labelNamesSet    func() stringset.Set
 
 	promVersion func() string
 	timestamps  func() (mint int64, maxt int64)
@@ -79,6 +81,7 @@ func NewPrometheusStore(
 	component component.StoreAPI,
 	externalLabelsFn func() labels.Labels,
 	timestamps func() (mint int64, maxt int64),
+	labelNamesSet func() stringset.Set,
 	promVersion func() string,
 ) (*PrometheusStore, error) {
 	if logger == nil {
@@ -92,6 +95,7 @@ func NewPrometheusStore(
 		externalLabelsFn:              externalLabelsFn,
 		promVersion:                   promVersion,
 		timestamps:                    timestamps,
+		labelNamesSet:                 labelNamesSet,
 		remoteReadAcceptableResponses: []prompb.ReadRequest_ResponseType{prompb.ReadRequest_STREAMED_XOR_CHUNKS, prompb.ReadRequest_SAMPLES},
 		buffers: sync.Pool{New: func() interface{} {
 			b := make([]byte, 0, initialBufSize)
@@ -145,8 +149,7 @@ func (p *PrometheusStore) putBuffer(b *[]byte) {
 
 // Series returns all series for a requested time range and label matcher.
 func (p *PrometheusStore) Series(r *storepb.SeriesRequest, seriesSrv storepb.Store_SeriesServer) error {
-	s := newFlushableServer(seriesSrv, sortingStrategyStore)
-
+	s := newFlushableServer(seriesSrv, p.labelNamesSet(), r.WithoutReplicaLabels)
 	extLset := p.externalLabelsFn()
 
 	match, matchers, err := matchesExternalLabels(r.Matchers, extLset)
